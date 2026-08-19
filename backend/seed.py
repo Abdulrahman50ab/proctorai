@@ -25,9 +25,9 @@ def seed_db():
             db.add(examiner)
             db.commit()
             db.refresh(examiner)
-            print("✓ Created default examiner: examiner@test.com / SecretPassword123!")
+            print("[OK] Created default examiner: examiner@test.com / SecretPassword123!")
         else:
-            print("✓ Default examiner already exists.")
+            print("[OK] Default examiner already exists.")
 
         # Check if sample exam exists
         sample_exam = db.query(Exam).filter(Exam.title == "Python & AI Proctoring Assessment").first()
@@ -97,9 +97,9 @@ def seed_db():
             for q in questions:
                 db.add(q)
             db.commit()
-            print("✓ Created sample exam with 4 questions.")
+            print("[OK] Created sample exam with 4 questions.")
         else:
-            print("✓ Sample exam already exists.")
+            print("[OK] Sample exam already exists.")
 
     finally:
         db.close()

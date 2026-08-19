@@ -11,26 +11,34 @@ import { ReportView } from './pages/ReportView';
 
 const AppContent = () => {
   const { user, loading } = useAuth();
-  const [currentTab, setCurrentTab] = useState('dashboard');
-  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
-  const [selectedExamId, setSelectedExamId] = useState(null);
+  const [currentTab, setCurrentTab] = useState('examiner_dashboard');
+  const [selectedExam, setSelectedExam] = useState(null);
+  const [candidateInfo, setCandidateInfo] = useState({ name: 'Candidate', email: 'candidate@test.com' });
   const [activeSession, setActiveSession] = useState(null);
-  const [reportSessionId, setReportSessionId] = useState(null);
+  const [activeReportId, setActiveReportId] = useState(null);
+  const [activeReportSessionId, setActiveReportSessionId] = useState(null);
 
-  // Check URL parameters on mount (e.g. ?exam=xyz or ?session=abc)
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const examParam = params.get('exam');
-    const sessionParam = params.get('session');
-
-    if (sessionParam) {
-      setReportSessionId(sessionParam);
-      setCurrentTab('report');
-    } else if (examParam) {
-      setSelectedExamId(examParam);
-      setCurrentTab('candidate-system-check');
+  // Handle navigation across pages
+  const handleNavigate = (tabName, params = {}) => {
+    if (params.examId || params.exam) {
+      setSelectedExam(params.exam || { id: params.examId });
     }
-  }, []);
+    if (params.reportId) {
+      setActiveReportId(params.reportId);
+    }
+    if (params.sessionId) {
+      setActiveReportSessionId(params.sessionId);
+    }
+    setCurrentTab(tabName);
+  };
+
+  const handleLaunchCandidate = (exam) => {
+    setSelectedExam(exam);
+    const candidateName = user ? user.name : 'Candidate';
+    const candidateEmail = user ? user.email : `candidate_${Date.now()}@test.com`;
+    setCandidateInfo({ name: candidateName, email: candidateEmail });
+    setCurrentTab('candidate_system_check');
+  };
 
   if (loading) {
     return (
@@ -40,14 +48,15 @@ const AppContent = () => {
     );
   }
 
-  // If candidate is in active exam, render full-screen exam room without standard navbar
-  if (currentTab === 'candidate-exam-room' && activeSession) {
+  // Active exam room full-screen mode
+  if (currentTab === 'candidate_exam_room' && activeSession) {
     return (
       <CandidateExamRoom
         session={activeSession}
         onExamCompleted={(sessionId) => {
-          setReportSessionId(sessionId);
-          setCurrentTab('report');
+          setActiveReportId(null);
+          setActiveReportSessionId(sessionId);
+          setCurrentTab('report_view');
         }}
       />
     );
@@ -55,60 +64,54 @@ const AppContent = () => {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
-      <Navbar currentTab={currentTab} setCurrentTab={setCurrentTab} />
+      <Navbar currentTab={currentTab} onTabChange={handleNavigate} />
 
       <main className="flex-1">
-        {/* If user is not logged in and not in a candidate flow, show Auth */}
-        {!user && currentTab !== 'candidate-system-check' && currentTab !== 'report' ? (
-          authMode === 'login' ? (
+        {/* If user is not logged in and not in a candidate or report flow, show Auth */}
+        {!user && currentTab !== 'candidate_system_check' && currentTab !== 'report_view' ? (
+          currentTab === 'register' ? (
+            <Register onSwitchToLogin={() => setCurrentTab('login')} />
+          ) : (
             <Login
-              onSwitchToRegister={() => setAuthMode('register')}
-              onCandidateAccess={() => {
-                // Default to first exam or prompt code
-                setCurrentTab('candidate-system-check');
+              onSwitchToRegister={() => setCurrentTab('register')}
+              onCandidateAccess={(code) => {
+                // Direct candidate access
+                setCurrentTab('examiner_dashboard');
               }}
             />
-          ) : (
-            <Register onSwitchToLogin={() => setAuthMode('login')} />
           )
         ) : (
           <>
-            {currentTab === 'dashboard' && (
+            {(currentTab === 'examiner_dashboard' || currentTab === 'dashboard') && (
               <ExaminerDashboard
-                onCreateExamClick={() => setCurrentTab('create-exam')}
-                onStartCandidateExam={(examId) => {
-                  setSelectedExamId(examId);
-                  setCurrentTab('candidate-system-check');
-                }}
-                onViewReport={(sessionId) => {
-                  setReportSessionId(sessionId);
-                  setCurrentTab('report');
-                }}
+                onNavigate={handleNavigate}
+                onLaunchCandidate={handleLaunchCandidate}
               />
             )}
 
-            {currentTab === 'create-exam' && (
+            {(currentTab === 'create_exam' || currentTab === 'create-exam') && (
               <CreateExam
-                onBack={() => setCurrentTab('dashboard')}
-                onExamCreated={() => setCurrentTab('dashboard')}
+                onBack={() => setCurrentTab('examiner_dashboard')}
+                onExamCreated={() => setCurrentTab('examiner_dashboard')}
               />
             )}
 
-            {currentTab === 'candidate-system-check' && (
+            {currentTab === 'candidate_system_check' && selectedExam && (
               <CandidateSystemCheck
-                examId={selectedExamId}
+                exam={selectedExam}
+                candidateInfo={candidateInfo}
                 onSystemCheckPassed={(session) => {
                   setActiveSession(session);
-                  setCurrentTab('candidate-exam-room');
+                  setCurrentTab('candidate_exam_room');
                 }}
-                onBackToLogin={() => setCurrentTab('dashboard')}
               />
             )}
 
-            {currentTab === 'report' && (
+            {(currentTab === 'report_view' || currentTab === 'reports') && (
               <ReportView
-                sessionId={reportSessionId || activeSession?.id}
-                onBackToDashboard={() => setCurrentTab('dashboard')}
+                reportId={activeReportId}
+                sessionId={activeReportSessionId}
+                onBack={() => setCurrentTab('examiner_dashboard')}
               />
             )}
           </>

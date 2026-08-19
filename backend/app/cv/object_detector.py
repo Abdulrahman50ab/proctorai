@@ -1,17 +1,22 @@
 import cv2
 import numpy as np
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 class ObjectDetector:
     def __init__(self):
         self.yolo_model = None
-        # Classes of interest: cell phone (67), book (73), laptop (63) in COCO dataset
+        self._load_attempted = False
         self.target_classes = ["cell phone", "book", "laptop"]
+
+    def _ensure_model(self):
+        if self._load_attempted:
+            return
+        self._load_attempted = True
         try:
             from ultralytics import YOLO
-            # Try to load lightweight model if installed
             self.yolo_model = YOLO("yolov8n.pt")
-        except Exception:
+        except Exception as e:
+            print(f"[ObjectDetector] YOLO unavailable: {e}")
             self.yolo_model = None
 
     def detect_objects(self, image: np.ndarray) -> Dict[str, Any]:
@@ -21,6 +26,7 @@ class ObjectDetector:
         if image is None or image.size == 0:
             return {"prohibited_detected": False, "detected_objects": []}
 
+        self._ensure_model()
         detected_objects = []
 
         if self.yolo_model:

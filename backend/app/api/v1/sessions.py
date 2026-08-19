@@ -65,12 +65,12 @@ def submit_session(session_id: str, submit_data: SessionSubmit, db: DBSession = 
         raise HTTPException(status_code=404, detail="Session not found")
 
     if session.status == "completed":
-        # Return existing result
         if session.result:
             return session.result
 
     session.status = "completed"
     session.ended_at = datetime.now(timezone.utc)
+    submit_answers = submit_data.answers or {}
 
     # 1. Compute Exam Score
     questions = db.query(Question).filter(Question.exam_id == session.exam_id).all()
@@ -80,18 +80,18 @@ def submit_session(session_id: str, submit_data: SessionSubmit, db: DBSession = 
     correct_count = 0
 
     for q in questions:
-        candidate_ans = submit_data.answers.get(q.id)
+        candidate_ans = submit_answers.get(q.id)
         if candidate_ans and str(candidate_ans).strip().lower() == str(q.correct_answer).strip().lower():
             earned_points += q.points
             correct_count += 1
 
     percentage_score = round((earned_points / total_points) * 100, 2)
-    passed = percentage_score >= session.exam.passing_score
+    passed = percentage_score >= (session.exam.passing_score if session.exam else 60)
 
     # Save Result
     result = Result(
         session_id=session.id,
-        answers=submit_data.answers,
+        answers=submit_answers,
         score=percentage_score,
         total_questions=total_questions,
         correct_answers=correct_count,
@@ -104,23 +104,26 @@ def submit_session(session_id: str, submit_data: SessionSubmit, db: DBSession = 
     events = db.query(Event).filter(Event.session_id == session.id).all()
     metrics = risk_engine.compute_session_metrics(events)
 
-    report = Report(
-        session_id=session.id,
-        face_presence_percentage=metrics["face_presence_percentage"],
-        attention_percentage=metrics["attention_percentage"],
-        total_violations=metrics["total_violations"],
-        final_risk_score=metrics["final_risk_score"],
-        risk_level=metrics["risk_level"],
-        summary_metrics=metrics["summary_metrics"],
-        generated_at=session.ended_at
-    )
-    db.add(report)
+    existing_report = db.query(Report).filter(Report.session_id == session.id).first()
+    if not existing_report:
+        report = Report(
+            session_id=session.id,
+            face_presence_percentage=metrics["face_presence_percentage"],
+            attention_percentage=metrics["attention_percentage"],
+            total_violations=metrics["total_violations"],
+            final_risk_score=metrics["final_risk_score"],
+            risk_level=metrics["risk_level"],
+            summary_metrics=metrics["summary_metrics"],
+            generated_at=session.ended_at
+        )
+        db.add(report)
 
     db.commit()
     db.refresh(result)
     return result
 
 @router.post("/{session_id}/process-frame")
+@router.post("/{session_id}/frame")
 def process_frame(
     session_id: str,
     req: FrameProcessRequest,

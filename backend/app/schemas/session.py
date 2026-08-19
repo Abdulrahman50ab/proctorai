@@ -13,7 +13,7 @@ class SessionStart(BaseModel):
     reference_photo_base64: Optional[str] = None
 
 class SessionSubmit(BaseModel):
-    answers: Dict[str, str]  # {question_id: selected_option}
+    answers: Dict[str, str] = {}  # {question_id: selected_option}
 
 class ResultResponse(BaseModel):
     id: str

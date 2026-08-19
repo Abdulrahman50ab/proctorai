@@ -13,8 +13,6 @@ from app.models.session import Session
 
 class SessionMonitor:
     def __init__(self):
-        # In-memory tracking of session state and alert cooldowns
-        # session_id -> { "last_missing_face": timestamp, "last_multi_face": timestamp, ... }
         self.session_states: Dict[str, Dict[str, Any]] = {}
 
     def _get_state(self, session_id: str) -> Dict[str, Any]:
@@ -23,7 +21,8 @@ class SessionMonitor:
                 "last_events": {},
                 "missing_face_streak": 0,
                 "gaze_streak": 0,
-                "current_risk": 0
+                "current_risk": 0,
+                "frame_index": 0,
             }
         return self.session_states[session_id]
 
@@ -51,46 +50,64 @@ class SessionMonitor:
             return {"error": "Could not decode frame", "status": "error"}
 
         # 2. Run Face Detection
-        face_res = face_detector.detect_faces(image)
+        try:
+            face_res = face_detector.detect_faces(image)
+        except Exception as e:
+            print(f"[SessionMonitor] Face detection failed: {e}")
+            face_res = {
+                "face_detected": False,
+                "face_count": 0,
+                "faces": [],
+                "centered": False,
+                "lighting_score": 0,
+                "landmarks": [],
+            }
         face_detected = face_res["face_detected"]
         face_count = face_res["face_count"]
 
         new_events: List[Dict[str, Any]] = []
 
-        # 3. Check Face Missing
+        state["frame_index"] = int(state.get("frame_index", 0)) + 1
+
+        # 3. Check Face Missing (need a short streak so one miss doesn't spam alerts)
         if not face_detected:
             state["missing_face_streak"] += 1
-            # Trigger alert if missing for >= 2 consecutive ticks and cooldown (> 5s)
             last_time = state["last_events"].get("FACE_NOT_DETECTED", 0)
-            if state["missing_face_streak"] >= 2 and (now - last_time) > 5.0:
+            if state["missing_face_streak"] >= 2 and (now - last_time) > 4.0:
                 evidence = event_engine.save_evidence_snapshot(base64_frame, session_id, "FACE_NOT_DETECTED")
                 self._record_event(db, session_id, "FACE_NOT_DETECTED", 0.95, evidence)
                 state["last_events"]["FACE_NOT_DETECTED"] = now
-                new_events.append({"event_type": "FACE_NOT_DETECTED", "message": "Candidate face not visible in frame"})
+                new_events.append({"event_type": "FACE_NOT_DETECTED", "message": "Candidate face not visible in camera frame"})
         else:
             state["missing_face_streak"] = 0
 
         # 4. Check Multiple Faces
         if face_count > 1:
             last_time = state["last_events"].get("MULTIPLE_FACES_DETECTED", 0)
-            if (now - last_time) > 6.0:
+            if (now - last_time) > 5.0:
                 evidence = event_engine.save_evidence_snapshot(base64_frame, session_id, "MULTIPLE_FACES_DETECTED")
                 self._record_event(db, session_id, "MULTIPLE_FACES_DETECTED", 0.90, evidence, {"face_count": face_count})
                 state["last_events"]["MULTIPLE_FACES_DETECTED"] = now
                 new_events.append({"event_type": "MULTIPLE_FACES_DETECTED", "message": f"{face_count} faces detected in camera frame"})
 
         # 5. Check Gaze & Head Pose (if standard or strict)
-        gaze_res = {"gaze_direction": "LOOKING_CENTER", "is_deviated": False}
-        head_res = {"direction": "CENTER", "is_anomaly": False}
-        
+        gaze_res = {"gaze_direction": "LOOKING_CENTER" if face_detected else "NO_FACE", "is_deviated": False}
+        head_res = {"direction": "CENTER" if face_detected else "UNKNOWN", "is_anomaly": False}
+
         if proctoring_level in ["standard", "strict"] and face_detected:
-            gaze_res = gaze_tracker.estimate_gaze(image)
-            head_res = head_pose_estimator.estimate_pose(image)
+            try:
+                gaze_res = gaze_tracker.estimate_gaze(image, face_res.get("landmarks", []))
+            except Exception:
+                pass
+            try:
+                head_res = head_pose_estimator.estimate_pose(image)
+            except Exception:
+                pass
 
             if gaze_res["is_deviated"] or head_res["is_anomaly"]:
                 state["gaze_streak"] += 1
                 last_time = state["last_events"].get("GAZE_DEVIATION", 0)
-                if state["gaze_streak"] >= 3 and (now - last_time) > 7.0:
+                if state["gaze_streak"] >= 2 and (now - last_time) > 6.0:
                     event_type = "HEAD_POSE_ANOMALY" if head_res["is_anomaly"] else "GAZE_DEVIATION"
                     evidence = event_engine.save_evidence_snapshot(base64_frame, session_id, event_type)
                     self._record_event(db, session_id, event_type, 0.85, evidence, {
@@ -98,17 +115,20 @@ class SessionMonitor:
                         "head_pose": head_res["direction"]
                     })
                     state["last_events"]["GAZE_DEVIATION"] = now
-                    new_events.append({"event_type": event_type, "message": f"Attention deviation detected: {gaze_res['gaze_direction']}"})
+                    new_events.append({"event_type": event_type, "message": f"Attention deviation: {gaze_res['gaze_direction']}"})
             else:
                 state["gaze_streak"] = 0
 
-        # 6. Check Prohibited Objects (e.g. Mobile Phone) if standard/strict
+        # 6. Check prohibited objects every 3rd frame so face detection stays responsive
         obj_res = {"prohibited_detected": False, "detected_objects": []}
-        if proctoring_level in ["standard", "strict"]:
-            obj_res = object_detector.detect_objects(image)
+        if proctoring_level in ["standard", "strict"] and face_detected and state["frame_index"] % 3 == 0:
+            try:
+                obj_res = object_detector.detect_objects(image)
+            except Exception:
+                obj_res = {"prohibited_detected": False, "detected_objects": []}
             if obj_res["prohibited_detected"]:
                 last_time = state["last_events"].get("PHONE_DETECTED", 0)
-                if (now - last_time) > 8.0:
+                if (now - last_time) > 7.0:
                     evidence = event_engine.save_evidence_snapshot(base64_frame, session_id, "PHONE_DETECTED")
                     self._record_event(db, session_id, "PHONE_DETECTED", 0.90, evidence, {"objects": obj_res["detected_objects"]})
                     state["last_events"]["PHONE_DETECTED"] = now
@@ -124,13 +144,14 @@ class SessionMonitor:
             "face_detected": face_detected,
             "face_count": face_count,
             "faces": face_res.get("faces", []),
-            "centered": face_res.get("centered", True),
-            "lighting_score": face_res.get("lighting_score", 100),
-            "gaze_direction": gaze_res.get("gaze_direction", "LOOKING_CENTER"),
-            "head_pose": head_res.get("direction", "CENTER"),
+            "centered": face_res.get("centered", False),
+            "lighting_score": face_res.get("lighting_score", 0),
+            "gaze_direction": gaze_res.get("gaze_direction", "NO_FACE"),
+            "head_pose": head_res.get("direction", "UNKNOWN"),
             "prohibited_detected": obj_res.get("prohibited_detected", False),
             "risk_score": current_risk,
             "risk_level": current_level,
+            "auto_submit": current_risk >= 100,
             "new_events": new_events,
             "timestamp": datetime.now(timezone.utc).isoformat()
         }

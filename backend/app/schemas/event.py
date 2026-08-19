@@ -10,7 +10,7 @@ class EventBase(BaseModel):
     details: Optional[Dict[str, Any]] = None
 
 class EventCreate(EventBase):
-    session_id: str
+    session_id: Optional[str] = None
     evidence_base64: Optional[str] = None  # Optional frame snapshot to save
 
 class EventResponse(EventBase):

@@ -1,5 +1,14 @@
 const API_BASE = '/api';
 
+const getAuthHeaders = (token) => {
+  const authToken = token || localStorage.getItem('proctorai_token');
+  const headers = { 'Content-Type': 'application/json' };
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+  return headers;
+};
+
 export const api = {
   // Auth
   async login(email, password) {
@@ -9,7 +18,7 @@ export const api = {
       body: JSON.stringify({ email, password }),
     });
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || 'Login failed');
     }
     return res.json();
@@ -22,7 +31,7 @@ export const api = {
       body: JSON.stringify({ name, email, password, role }),
     });
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || 'Registration failed');
     }
     return res.json();
@@ -30,7 +39,7 @@ export const api = {
 
   async getMe(token) {
     const res = await fetch(`${API_BASE}/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: getAuthHeaders(token),
     });
     if (!res.ok) throw new Error('Unauthorized');
     return res.json();
@@ -39,9 +48,9 @@ export const api = {
   // Exams
   async getExams(token) {
     const res = await fetch(`${API_BASE}/exams`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: getAuthHeaders(token),
     });
-    if (!res.ok) throw new Error('Failed to fetch exams');
+    if (!res.ok) return [];
     return res.json();
   },
 
@@ -54,15 +63,16 @@ export const api = {
   async createExam(examData, token) {
     const res = await fetch(`${API_BASE}/exams`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
+      headers: getAuthHeaders(token),
       body: JSON.stringify(examData),
     });
     if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || 'Failed to create exam');
+      const err = await res.json().catch(() => ({}));
+      let msg = err.detail;
+      if (Array.isArray(err.detail)) {
+        msg = err.detail.map(d => `${d.loc ? d.loc.join(' -> ') : ''}: ${d.msg}`).join(', ');
+      }
+      throw new Error(msg || 'Failed to create exam');
     }
     return res.json();
   },
@@ -70,25 +80,25 @@ export const api = {
   async deleteExam(examId, token) {
     const res = await fetch(`${API_BASE}/exams/${examId}`, {
       method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: getAuthHeaders(token),
     });
     if (!res.ok) throw new Error('Failed to delete exam');
     return true;
   },
 
   // Sessions
-  async createSession(examId, candidateName, candidateEmail) {
+  async createSession({ exam_id, candidate_name, candidate_email }) {
     const res = await fetch(`${API_BASE}/sessions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        exam_id: examId,
-        candidate_name: candidateName,
-        candidate_email: candidateEmail,
+        exam_id,
+        candidate_name,
+        candidate_email,
       }),
     });
     if (!res.ok) {
-      const err = await res.json();
+      const err = await res.json().catch(() => ({}));
       throw new Error(err.detail || 'Failed to create candidate session');
     }
     return res.json();
@@ -100,11 +110,18 @@ export const api = {
     return res.json();
   },
 
-  async startSession(sessionId) {
+  async startSession(sessionId, referencePhotoBase64 = null) {
     const res = await fetch(`${API_BASE}/sessions/${sessionId}/start`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reference_photo_base64: referencePhotoBase64,
+      }),
     });
-    if (!res.ok) throw new Error('Failed to start session');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to start session');
+    }
     return res.json();
   },
 
@@ -114,7 +131,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ answers }),
     });
-    if (!res.ok) throw new Error('Failed to submit exam');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Failed to submit exam');
+    }
     return res.json();
   },
 
@@ -124,36 +144,61 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ frame_base64: frameBase64 }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      console.warn('Frame processing request error:', err);
+      throw new Error(err.detail || 'Frame processing failed');
+    }
     return res.json();
   },
 
-  async logEvent(sessionId, eventType, evidenceBase64 = null) {
-    const res = await fetch(`${API_BASE}/sessions/${sessionId}/events`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: sessionId,
-        event_type: eventType,
-        evidence_base64: evidenceBase64,
-      }),
-    });
-    if (!res.ok) return null;
-    return res.json();
+  async logEvent(sessionId, eventType, confidence = 1.0, details = null) {
+    try {
+      const res = await fetch(`${API_BASE}/sessions/${sessionId}/events`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          event_type: eventType,
+          confidence,
+          details,
+        }),
+      });
+      if (!res.ok) {
+        console.warn('Could not log event:', await res.json().catch(() => ({})));
+        return null;
+      }
+      return res.json();
+    } catch (e) {
+      console.warn('Could not log event:', e);
+      return null;
+    }
   },
 
   // Reports
-  async getReport(sessionId) {
-    const res = await fetch(`${API_BASE}/reports/${sessionId}`);
-    if (!res.ok) throw new Error('Failed to fetch report');
+  async getReports(token) {
+    const res = await fetch(`${API_BASE}/reports`, {
+      headers: getAuthHeaders(token),
+    });
+    if (!res.ok) return [];
     return res.json();
   },
 
-  async getExamReports(examId, token) {
-    const res = await fetch(`${API_BASE}/reports/exam/${examId}`, {
-      headers: { Authorization: `Bearer ${token}` },
+  async getReport(reportId, token) {
+    const res = await fetch(`${API_BASE}/reports/${reportId}`, {
+      headers: getAuthHeaders(token),
     });
-    if (!res.ok) throw new Error('Failed to fetch exam reports');
+    if (!res.ok) throw new Error('Report not found');
     return res.json();
-  }
+  },
+
+  async getSessionReport(sessionId) {
+    const res = await fetch(`${API_BASE}/reports/session/${sessionId}`);
+    if (!res.ok) {
+      const fallback = await fetch(`${API_BASE}/reports/${sessionId}`);
+      if (!fallback.ok) throw new Error('Report not found');
+      return fallback.json();
+    }
+    return res.json();
+  },
 };
