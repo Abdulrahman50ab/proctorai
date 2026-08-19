@@ -77,6 +77,39 @@ export const api = {
     return res.json();
   },
 
+  async generateQuestionsFromTopic(topic, count = 5, difficulty = 'medium', token) {
+    const res = await fetch(`${API_BASE}/exams/generate-from-topic`, {
+      method: 'POST',
+      headers: getAuthHeaders(token),
+      body: JSON.stringify({ topic, count, difficulty }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Groq could not generate questions from this topic');
+    }
+    return res.json();
+  },
+
+  async generateQuestionsFromPdf(file, count = 8, difficulty = 'medium', token) {
+    const form = new FormData();
+    form.append('file', file);
+    form.append('count', String(count));
+    form.append('difficulty', difficulty);
+    const authToken = token || localStorage.getItem('proctorai_token');
+    const headers = {};
+    if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+    const res = await fetch(`${API_BASE}/exams/generate-from-pdf`, {
+      method: 'POST',
+      headers,
+      body: form,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || 'Groq could not generate questions from this PDF');
+    }
+    return res.json();
+  },
+
   async deleteExam(examId, token) {
     const res = await fetch(`${API_BASE}/exams/${examId}`, {
       method: 'DELETE',

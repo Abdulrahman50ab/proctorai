@@ -1,7 +1,9 @@
 from typing import List
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import AnyHttpUrl
 import os
+
+_BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
 
 class Settings(BaseSettings):
     PROJECT_NAME: str = "ProctorAI"
@@ -11,12 +13,16 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 day
 
+    # Groq Cloud (question generation)
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "openai/gpt-oss-20b"
+
     # Database
     DATABASE_URL: str = "sqlite:///./proctorai.db"
 
     # Evidence and uploads storage directory
-    UPLOAD_DIR: str = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
-    EVIDENCE_DIR: str = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads", "evidence")
+    UPLOAD_DIR: str = os.path.join(_BACKEND_ROOT, "uploads")
+    EVIDENCE_DIR: str = os.path.join(_BACKEND_ROOT, "uploads", "evidence")
 
     # CORS
     BACKEND_CORS_ORIGINS: List[str] = [
@@ -27,7 +33,11 @@ class Settings(BaseSettings):
         "*"
     ]
 
-    model_config = SettingsConfigDict(case_sensitive=True, env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        case_sensitive=True,
+        env_file=os.path.join(_BACKEND_ROOT, ".env"),
+        extra="ignore",
+    )
 
 settings = Settings()
 

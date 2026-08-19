@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { 
-  ArrowLeft, Plus, Trash2, Shield, CheckCircle2, HelpCircle, 
-  Sparkles, BookOpen, AlertCircle, Save, Layers, Check 
+  ArrowLeft, Plus, Trash2, CheckCircle2, 
+  Sparkles, BookOpen, AlertCircle, Save, Upload, FileText, Loader2
 } from 'lucide-react';
 import { api } from '../services/api';
 import { useAuth } from '../context/AuthContext';
@@ -16,6 +16,12 @@ export const CreateExam = ({ onBack, onExamCreated }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
+  const [topic, setTopic] = useState('');
+  const [aiCount, setAiCount] = useState(5);
+  const [aiDifficulty, setAiDifficulty] = useState('medium');
+  const [pdfFile, setPdfFile] = useState(null);
+  const [generating, setGenerating] = useState(false);
+  const [replaceQuestions, setReplaceQuestions] = useState(true);
 
   const [questions, setQuestions] = useState([
     {
@@ -134,6 +140,58 @@ export const CreateExam = ({ onBack, onExamCreated }) => {
     const updated = [...questions];
     updated[qIdx].correct_answer = optionText;
     setQuestions(updated);
+  };
+
+  const applyGeneratedQuestions = (generated) => {
+    const mapped = generated.map((q) => ({
+      question_text: q.question_text,
+      question_type: q.question_type || 'mcq',
+      options: q.options?.length ? q.options : ['Option A', 'Option B', 'Option C', 'Option D'],
+      correct_answer: q.correct_answer,
+      points: q.points || 1,
+      explanation: q.explanation || ''
+    }));
+    setQuestions((prev) => (replaceQuestions ? mapped : [...prev, ...mapped]));
+    if (!title.trim() && topic.trim()) {
+      setTitle(`${topic.trim().slice(0, 72)} Assessment`);
+    }
+  };
+
+  const handleGenerateFromTopic = async () => {
+    if (!topic.trim()) {
+      setError('Enter a topic or syllabus so Groq can write questions.');
+      return;
+    }
+    setGenerating(true);
+    setError(null);
+    try {
+      const data = await api.generateQuestionsFromTopic(topic.trim(), Number(aiCount) || 5, aiDifficulty, token);
+      applyGeneratedQuestions(data.questions || []);
+    } catch (err) {
+      setError(err.message || 'Groq question generation failed.');
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  const handleGenerateFromPdf = async () => {
+    if (!pdfFile) {
+      setError('Choose a PDF first.');
+      return;
+    }
+    setGenerating(true);
+    setError(null);
+    try {
+      const data = await api.generateQuestionsFromPdf(pdfFile, Number(aiCount) || 8, aiDifficulty, token);
+      if (!title.trim() && data.filename) {
+        setTitle(data.filename.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' '));
+      }
+      applyGeneratedQuestions(data.questions || []);
+    } catch (err) {
+      setError(err.message || 'PDF question generation failed.');
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -373,11 +431,111 @@ export const CreateExam = ({ onBack, onExamCreated }) => {
           </div>
         </div>
 
-        {/* Section 3: Questions Builder */}
+        {/* Groq AI Question Generator */}
+        <div className="glass-card p-6 sm:p-8 rounded-2xl border border-slate-800 shadow-xl space-y-5">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center space-x-2">
+            <span className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs font-mono">3</span>
+            <span>Generate questions with Groq</span>
+          </h2>
+          <p className="text-xs text-slate-400">
+            Upload a PDF or type a topic. Groq Cloud writes MCQs you can edit before publishing.
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">How many questions</label>
+              <input
+                type="number"
+                min={1}
+                max={15}
+                value={aiCount}
+                onChange={(e) => setAiCount(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/60"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-300 mb-1.5">Difficulty</label>
+              <select
+                value={aiDifficulty}
+                onChange={(e) => setAiDifficulty(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-800 rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/60"
+              >
+                <option value="easy">Easy</option>
+                <option value="medium">Medium</option>
+                <option value="hard">Hard</option>
+              </select>
+            </div>
+          </div>
+
+          <label className="flex items-center space-x-2 text-xs text-slate-400">
+            <input
+              type="checkbox"
+              checked={replaceQuestions}
+              onChange={(e) => setReplaceQuestions(e.target.checked)}
+              className="accent-emerald-500"
+            />
+            <span>Replace current questions with generated ones</span>
+          </label>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+              <div className="flex items-center space-x-2 text-xs font-bold text-white">
+                <Sparkles className="w-4 h-4 text-emerald-400" />
+                <span>From topic</span>
+              </div>
+              <textarea
+                rows={4}
+                value={topic}
+                onChange={(e) => setTopic(e.target.value)}
+                placeholder="e.g. Python lists vs tuples, REST APIs, or a full syllabus outline..."
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500/60"
+              />
+              <button
+                type="button"
+                disabled={generating}
+                onClick={handleGenerateFromTopic}
+                className="w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold disabled:opacity-50"
+              >
+                {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                <span>{generating ? 'Groq is writing questions...' : 'Generate from topic'}</span>
+              </button>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-800 space-y-3">
+              <div className="flex items-center space-x-2 text-xs font-bold text-white">
+                <FileText className="w-4 h-4 text-cyan-400" />
+                <span>From PDF</span>
+              </div>
+              <label className="flex flex-col items-center justify-center gap-2 min-h-[96px] rounded-xl border border-dashed border-slate-700 bg-slate-950 px-3 py-4 cursor-pointer hover:border-cyan-500/50">
+                <Upload className="w-5 h-5 text-slate-500" />
+                <span className="text-[11px] text-slate-400 text-center">
+                  {pdfFile ? pdfFile.name : 'Click to upload a PDF (max 10 MB)'}
+                </span>
+                <input
+                  type="file"
+                  accept="application/pdf,.pdf"
+                  className="hidden"
+                  onChange={(e) => setPdfFile(e.target.files?.[0] || null)}
+                />
+              </label>
+              <button
+                type="button"
+                disabled={generating}
+                onClick={handleGenerateFromPdf}
+                className="w-full flex items-center justify-center space-x-2 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold disabled:opacity-50"
+              >
+                {generating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+                <span>{generating ? 'Reading PDF with Groq...' : 'Extract questions from PDF'}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Section 4: Questions Builder */}
         <div className="glass-card p-6 sm:p-8 rounded-2xl border border-slate-800 shadow-xl space-y-6">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold uppercase tracking-wider text-slate-300 flex items-center space-x-2">
-              <span className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs font-mono">3</span>
+              <span className="w-6 h-6 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-xs font-mono">4</span>
               <span>Questions ({questions.length})</span>
             </h2>
 
